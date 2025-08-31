@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime,timedelta
+from datetime import datetime,timedelta,date
 from collections import defaultdict
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 from flask_login import login_required
@@ -7,7 +7,7 @@ from flask_login import login_required
 # --- Updated Imports ---
 # RotaAssignment and Shift are new, ShiftHistory and MemberShiftState are removed.
 from models.models import db, Rota, Team, Shift, RotaAssignment
-from logic.rota_logic import generate_period_rota # The function signature is simpler now
+from logic.rota_logic import generate_period_rota, RotaGenerationError
 from blueprints.members import requires_level
 
 logging.basicConfig(level=logging.INFO)
@@ -35,24 +35,18 @@ def generate_rota():
     if request.method == 'POST':
         try:
             start_date_str = request.form['start_date']
-            end_date_str = request.form['end_date']
+            # End date calculation can be simplified to just a number of weeks
+            period_weeks = int(request.form['period_weeks'])
             
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
 
-            if end_date < start_date:
-                flash("End date cannot be before the start date.", 'danger')
-                return redirect(url_for('rota.generate_rota'))
-                
-            # Calculate the number of full weeks in the period.
-            period_weeks = (end_date - start_date).days // 7
             if period_weeks < 1:
-                flash("The selected period must be at least one full week.", 'danger')
+                flash("Period must be at least one week.", 'danger')
                 return redirect(url_for('rota.generate_rota'))
 
-            # --- Simplified Logic Call ---
-            # The logic function now handles member fetching and validation internally.
-            # The obsolete 'first_night_off_member' has been removed.
+            # --- Simplified and More Robust Logic Call ---
+            # The logic function now handles all setup, validation, and error logging.
+            # It returns the ID on success and None on failure.
             rota_id = generate_period_rota(
                 start_date=start_date,
                 period_weeks=period_weeks
@@ -62,19 +56,23 @@ def generate_rota():
                 flash(f"Rota generated successfully with ID {rota_id} for {period_weeks} weeks.", 'success')
                 return redirect(url_for('rota.rota_detail', rota_id=rota_id))
             else:
-                # The generator function now returns None on failure and logs the error.
-                flash("Rota generation failed. Check server logs for details.", 'danger')
+                # The generator function now returns None on failure and logs the specific error.
+                flash("Rota generation failed. The configuration may be impossible to satisfy (e.g., not enough staff). Check server logs for details.", 'danger')
 
-        except ValueError as e:
-            flash(f"Input Error: {str(e)}", 'danger')
+        except (ValueError, TypeError):
+            # Catches errors from int() or strptime()
+            flash("Invalid input. Please check the date and number of weeks.", 'danger')
         except Exception as e:
-            logger.error(f"An unexpected error occurred during rota generation: {str(e)}")
-            flash(f"A server error occurred: {str(e)}", 'danger')
+            # Catch any other unexpected errors
+            logger.error(f"An unexpected error occurred in the rota generation route: {str(e)}")
+            flash(f"A server error occurred. Please contact an administrator.", 'danger')
             
         return redirect(url_for('rota.generate_rota'))
 
-    # For the GET request, just render the generation page.
-    return render_template('rota.html')
+    # For GET request, suggest a default start date (next Monday)
+    today = date.today()
+    next_monday = today + timedelta(days=-today.weekday(), weeks=1)
+    return render_template('rota.html', default_start_date=next_monday)
 
 @rota_bp.route('/rota/<int:rota_id>', methods=['GET'])
 @login_required
@@ -164,9 +162,3 @@ def delete_rota(rota_id):
         flash(f"An error occurred while deleting the rota: {str(e)}", 'danger')
         
     return redirect(url_for('rota.list_rotas'))
-
-# --- Obsolete Routes Removed ---
-# The '/select_night_off' route has been removed as it's no longer needed.
-# The '/rota/edit/<id>' route has been removed. Due to the database model change,
-# the old EditRotaForm is incompatible. A new editing interface would need to be
-# designed to handle individual RotaAssignment records.

@@ -5,39 +5,103 @@
 {% endblock %}
 
 {% block content %}
+<style>
+/* 🔹 Fade-in for alerts */
+.alert {
+  animation: fadeInDown 0.6s ease;
+}
+
+/* 🔹 Fade-in for table rows */
+.table tbody tr {
+  animation: fadeInUp 0.5s ease;
+  animation-fill-mode: both;
+}
+
+/* Stagger effect for each row */
+.table tbody tr:nth-child(1) { animation-delay: 0.05s; }
+.table tbody tr:nth-child(2) { animation-delay: 0.1s; }
+.table tbody tr:nth-child(3) { animation-delay: 0.15s; }
+.table tbody tr:nth-child(4) { animation-delay: 0.2s; }
+/* extend if you have many rows */
+
+/* 🔹 Fade-in for member badges */
+.badge {
+  animation: fadeInScale 0.4s ease;
+}
+
+/* Keyframes */
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-15px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(15px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* Force left alignment of badges inside table body cells */
+.table tbody td {
+  text-align: left !important;
+  vertical-align: middle;
+  white-space: normal;   /* allow wrapping */
+  word-break: break-word; /* break long names if needed */
+}
+</style>
+
+<div class="container mt-4">
+
+    {# Flash Messages with Icons #}
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
-            <div class="alert-container">
+            {% set icons = {'success': 'check-circle', 'danger': 'exclamation-triangle', 'warning': 'exclamation-circle', 'info': 'info-circle'} %}
             {% for category, message in messages %}
-                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                    {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            {% endfor %}
+            <div class="alert alert-{{ category }} alert-dismissible fade show shadow-sm rounded-3 mb-3" role="alert">
+                <i class="bi bi-{{ icons.get(category, 'info-circle') }} me-2"></i>
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
+            {% endfor %}
         {% endif %}
     {% endwith %}
 
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-
-            <p class="lead">
-                Schedule from <strong>{{ rota_info.start_date.strftime('%d %b %Y') }}</strong> to <strong>{{ rota_info.end_date.strftime('%d %b %Y') }}</strong>
-            </p>
+    {# Rota Header Card #}
+    <div class="card shadow-sm mb-4 rounded-3">
+        <div class="card-header bg-gradient bg-primary text-white d-flex justify-content-between align-items-center">
+            <h1 class="h5 mb-0">
+                <i class="bi bi-calendar-week me-2"></i>
+                Rota Details: <span class="badge bg-light text-dark">#{{ rota_id }}</span>
+            </h1>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('rota.list_rotas') }}" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-arrow-left-circle"></i> Back
+                </a>
+                <a href="{{ url_for('pdf.export_pdf', rota_id=rota_id) }}" class="btn btn-light btn-sm">
+                    <i class="bi bi-file-earmark-pdf"></i> Export PDF
+                </a>
+            </div>
         </div>
-        <div>
-            <a href="{{ url_for('pdf.export_pdf', rota_id=rota_id) }}" class="btn btn-primary">
-                <i class="bi bi-file-earmark-pdf"></i> Export to PDF
-            </a>
+        <div class="card-body">
+            <p class="lead mb-0 text-muted">
+                📅 Schedule from 
+                <strong>{{ rota_info.start_date.strftime('%d %b %Y') }}</strong> 
+                to 
+                <strong>{{ rota_info.end_date.strftime('%d %b %Y') }}</strong>
+            </p>
         </div>
     </div>
 
+    {# Table or Empty State #}
     {% if sorted_weekly_data %}
         <div class="table-responsive">
-            <table class="table table-striped table-bordered text-center">
-                <thead class="table-dark">
+            <table class="table table-bordered table-striped table-hover text-center align-middle shadow-sm rounded-3">
+                <thead class="table-primary">
                     <tr>
-                        <th style="width: 20%;">Week Range</th>
+                        <th style="width: 20%;">📅 Week Range</th>
                         {% for shift in shift_info %}
                             <th title="{{ shift.name }}">{{ shift.display_name }}</th>
                         {% endfor %}
@@ -45,16 +109,20 @@
                 </thead>
                 <tbody>
                     {% for week_start, assignments in sorted_weekly_data %}
+                        {% set week_end = week_start + timedelta(days=6) %}
                         <tr>
-                            {% set week_end = week_start + timedelta(days=6) %}
-                            <td>{{ week_start.strftime('%d %b') }} - {{ week_end.strftime('%d %b %Y') }}</td>
+                            <td class="fw-bold text-primary">
+                                {{ week_start.strftime('%d %b') }} &ndash; {{ week_end.strftime('%d %b %Y') }}
+                            </td>
                             {% for shift in shift_info %}
                                 <td>
-                                    {% set members = assignments[shift.display_name] %}
+                                    {% set members = assignments[shift.display_name] | sort %}
                                     {% if members %}
-                                        {{ members | sort | join(', ') }}
+                                        {% for member in members %}
+                                            <span class="badge bg-light text-dark me-1 mb-1">{{ member }}</span>
+                                        {% endfor %}
                                     {% else %}
-                                        &ndash;
+                                        <span class="text-muted"><i class="bi bi-dash-circle"></i></span>
                                     {% endif %}
                                 </td>
                             {% endfor %}
@@ -64,9 +132,19 @@
             </table>
         </div>
     {% else %}
-        <div class="alert alert-warning" role="alert">
-            <h4 class="alert-heading">No Assignments Found</h4>
-            <p>No shift assignments are available for Rota ID {{ rota_id }}. The rota may be empty, or an error may have occurred.</p>
+        <div class="card text-center py-5 shadow-sm rounded-3">
+            <div class="card-body">
+                <h2 class="card-title text-muted">
+                    <i class="bi bi-clipboard-x me-2"></i> No Assignments Found
+                </h2>
+                <p class="card-text">
+                    No shift assignments are available for Rota ID <strong>{{ rota_id }}</strong>.
+                </p>
+                <a href="{{ url_for('rota.list_rotas') }}" class="btn btn-primary mt-3">
+                    <i class="bi bi-arrow-left-circle"></i> View All Rotas
+                </a>
+            </div>
         </div>
     {% endif %}
+</div>
 {% endblock %}
