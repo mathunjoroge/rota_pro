@@ -1,141 +1,172 @@
 import logging
-import pytz
-from datetime import datetime, timedelta
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session, abort
+from datetime import datetime,timedelta
+from collections import defaultdict
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 from flask_login import login_required
-from forms.org_form import EditRotaForm
-from models.models import db, Rota, Team, ShiftHistory, MemberShiftState
-from logic.rota_logic import generate_period_rota
+
+# --- Updated Imports ---
+# RotaAssignment and Shift are new, ShiftHistory and MemberShiftState are removed.
+from models.models import db, Rota, Team, Shift, RotaAssignment
+from logic.rota_logic import generate_period_rota # The function signature is simpler now
 from blueprints.members import requires_level
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 rota_bp = Blueprint('rota', __name__)
+
+@rota_bp.route('/rotas', methods=['GET'])
+@login_required
+def list_rotas():
+    """
+    Displays a list of all previously generated rota schedules.
+    """
+    # The new Rota model has one entry per generated rota, which simplifies this query.
+    all_rotas = Rota.query.order_by(Rota.start_date.desc()).all()
+    return render_template('rotas_list.html', rotas=all_rotas)
 
 @rota_bp.route('/generate_rota', methods=['GET', 'POST'])
 @login_required
 def generate_rota():
+    """
+    Handles the generation of a new rota schedule.
+    The GET request shows the form, and POST triggers the generation logic.
+    """
     if request.method == 'POST':
-        action = request.form.get('action')
-        if action == 'generate':
-            try:
-                start_date_str = request.form['start_date']
-                end_date_str = request.form['end_date']
-                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').replace(tzinfo=pytz.utc).date()
-                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').replace(tzinfo=pytz.utc).date()
-                if end_date < start_date:
-                    flash("End date must be after start date.", 'error')
-                    return redirect(url_for('rota.generate_rota'))
-                period_weeks = ((end_date - start_date).days // 7) + 1
-                if period_weeks < 1:
-                    flash("Period must include at least one week.", 'error')
-                    return redirect(url_for('rota.generate_rota'))
-                eligible_members = Team.query.all()
-                if len(eligible_members) < 7:
-                    flash("Not enough members to generate a complete rota.", 'error')
-                    return redirect(url_for('rota.generate_rota'))
-                first_night_off_member_id = session.pop('first_night_off_member_id', None)
-                first_night_off_member = Team.query.get(first_night_off_member_id) if first_night_off_member_id else None
-                night_shift_members, rota_id = generate_period_rota(
-                    eligible_members=eligible_members,
-                    start_date=start_date,
-                    period_weeks=period_weeks,
-                    week_duration_days=7,
-                    reset_history_after_weeks=6,
-                    use_db_for_history=True,
-                    first_night_off_member=first_night_off_member
-                )
+        try:
+            start_date_str = request.form['start_date']
+            end_date_str = request.form['end_date']
+            
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+            if end_date < start_date:
+                flash("End date cannot be before the start date.", 'danger')
+                return redirect(url_for('rota.generate_rota'))
+                
+            # Calculate the number of full weeks in the period.
+            period_weeks = (end_date - start_date).days // 7
+            if period_weeks < 1:
+                flash("The selected period must be at least one full week.", 'danger')
+                return redirect(url_for('rota.generate_rota'))
+
+            # --- Simplified Logic Call ---
+            # The logic function now handles member fetching and validation internally.
+            # The obsolete 'first_night_off_member' has been removed.
+            rota_id = generate_period_rota(
+                start_date=start_date,
+                period_weeks=period_weeks
+            )
+
+            if rota_id:
                 flash(f"Rota generated successfully with ID {rota_id} for {period_weeks} weeks.", 'success')
                 return redirect(url_for('rota.rota_detail', rota_id=rota_id))
-            except ValueError as e:
-                flash(f"Error generating rota: {str(e)}", 'error')
-                return redirect(url_for('rota.generate_rota'))
-            except Exception as e:
-                logging.error(f"Server error generating rota: {str(e)}")
-                flash(f"Server error: {str(e)}", 'error')
-                return redirect(url_for('rota.generate_rota'))
-    last_rota = Rota.query.order_by(Rota.date.desc()).first()
-    rotas = Rota.query.filter_by(rota_id=last_rota.rota_id).order_by(Rota.date).all() if last_rota else []
-    return render_template('rota.html', rotas=rotas)
+            else:
+                # The generator function now returns None on failure and logs the error.
+                flash("Rota generation failed. Check server logs for details.", 'danger')
 
-@rota_bp.route('/delete_rota', methods=['POST'])
-@login_required
-@requires_level(1)
-def delete_rota():
-    try:
-        Rota.query.delete()
-        ShiftHistory.query.delete()
-        MemberShiftState.query.delete()
-        db.session.commit()
-        flash('Rota, shift history, and shift states deleted successfully!', 'success')
-    except Exception as e:
-        db.session.rollback()
-        logging.error(f"Error deleting rota: {str(e)}")
-        flash(f"Error deleting rota: {str(e)}", 'error')
-    return redirect(url_for('rota.generate_rota'))
-
-@rota_bp.route('/select_night_off', methods=['GET', 'POST'])
-@login_required
-@requires_level(1)
-def select_night_off():
-    if request.method == 'POST':
-        member_id = request.form.get('member_id')
-        member = Team.query.get(member_id)
-        if member:
-            session['first_night_off_member_id'] = member.id
-            flash(f"Selected {member.name} for the first night off.", 'success')
-        else:
-            flash("Invalid member selected. Please try again.", 'error')
+        except ValueError as e:
+            flash(f"Input Error: {str(e)}", 'danger')
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during rota generation: {str(e)}")
+            flash(f"A server error occurred: {str(e)}", 'danger')
+            
         return redirect(url_for('rota.generate_rota'))
-    else:
-        members = Team.query.all()
-        return render_template('select_night_off.html', members=members)
+
+    # For the GET request, just render the generation page.
+    return render_template('rota.html')
 
 @rota_bp.route('/rota/<int:rota_id>', methods=['GET'])
-def rota_detail(rota_id):
-    rotas = Rota.query.filter_by(rota_id=rota_id).order_by(Rota.date).all()
-    if not rotas:
-        abort(404)
-    return render_template('rota_detail.html', rotas=rotas, rota_id=rota_id)
-
-@rota_bp.route('/rotas')
-def list_rotas():
-    rota_id = request.args.get('rota_id', type=int)
-    if rota_id:
-        rotas = Rota.query.filter_by(rota_id=rota_id).order_by(Rota.date).all()
-    else:
-        distinct_rota_ids = db.session.query(Rota.rota_id).distinct().all()
-        distinct_rota_ids = [row.rota_id for row in distinct_rota_ids]
-        rotas = [Rota.query.filter_by(rota_id=rota_id).first() for rota_id in distinct_rota_ids if Rota.query.filter_by(rota_id=rota_id).first()]
-    return render_template('rotas_list.html', rotas=rotas)
-
-@rota_bp.route('/rota/edit/<int:rota_id>', methods=['GET', 'POST'])
 @login_required
-def edit_rota(rota_id):
-    rotas = Rota.query.filter_by(rota_id=rota_id).order_by(Rota.date).all()
-    if not rotas:
-        flash("No rota found for the given ID.", "danger")
-        return redirect(url_for('rota.list_rotas'))
-    forms = [EditRotaForm(obj=rota) for rota in rotas]
-    if request.method == "POST":
-        try:
-            all_valid = True
-            for form in forms:
-                if not form.validate():
-                    all_valid = False
-                    for field, errors in form.errors.items():
-                        for error in errors:
-                            flash(f"Error in {field}: {error}", "error")
-            if all_valid:
-                for form, rota in zip(forms, rotas):
-                    rota.shift_8_5 = form.shift_8_5.data
-                    rota.shift_5_8 = form.shift_5_8.data
-                    rota.shift_8_8 = form.shift_8_8.data
-                    rota.night_off = form.night_off.data
-                db.session.commit()
-                flash("Rota updated successfully", "success")
-                return redirect(url_for('rota.rota_detail', rota_id=rota_id))
-        except Exception as e:
-            db.session.rollback()
-            flash(f"Error updating rota: {str(e)}", "error")
-    return render_template('edit_rota.html', forms=forms)
+def rota_detail(rota_id):
+    """
+    Displays the detailed weekly assignments for a specific rota.
+    """
+    # Verify the rota exists.
+    rota_info = Rota.query.filter_by(rota_id=rota_id).first()
+    if not rota_info:
+        abort(404, "Rota with this ID was not found.")
+
+    # Fetch all assignments for this rota.
+    assignments = RotaAssignment.query.filter_by(rota_id=rota_id).all()
+    
+    # Fetch all shifts.
+    shifts = Shift.query.all()
+    
+    # Define the desired shift order by database name.
+    desired_shift_names = ['Day', 'Evening', 'Night', 'Night Off']
+    
+    # Create a mapping of shift names to formatted display names and store shift info.
+    shift_info = []
+    shift_name_map = {}
+    for shift in shifts:
+        if shift.name in desired_shift_names:
+            if shift.name == 'Night Off':
+                display_name = 'Night Off'
+            else:
+                start = datetime.strptime(str(shift.start_time), '%H:%M:%S').strftime('%I:%M %p').lstrip('0')
+                end = datetime.strptime(str(shift.end_time), '%H:%M:%S').strftime('%I:%M %p').lstrip('0')
+                display_name = f'{start}–{end}'
+            shift_info.append({'name': shift.name, 'display_name': display_name})
+            shift_name_map[shift.name] = display_name
+    
+    # Sort shift_info to match desired_shift_names order.
+    shift_info = sorted(shift_info, key=lambda x: desired_shift_names.index(x['name']))
+    
+    # Extract display names for mapping assignments.
+    display_shift_names = [item['display_name'] for item in shift_info]
+    
+    # Verify all required shifts exist.
+    available_shift_names = {s.name for s in shifts}
+    for shift_name in desired_shift_names:
+        if shift_name not in available_shift_names:
+            abort(500, f"Shift '{shift_name}' not found in the database.")
+
+    # Process assignments into a structure the template can easily render:
+    # { week_start_date: { display_shift_name: [member_names] } }
+    weekly_data = defaultdict(lambda: {name: [] for name in display_shift_names})
+    for assign in assignments:
+        if assign.shift.name in desired_shift_names:
+            display_name = shift_name_map.get(assign.shift.name, assign.shift.name)
+            weekly_data[assign.week_start_date][display_name].append(assign.member.name)
+    
+    # Sort the data by week for display.
+    sorted_weekly_data = sorted(weekly_data.items())
+
+    return render_template(
+        'rota_detail.html',
+        rota_id=rota_id,
+        rota_info=rota_info,
+        sorted_weekly_data=sorted_weekly_data,
+        timedelta=timedelta,
+        shift_info=shift_info
+    )
+
+@rota_bp.route('/delete_rota/<int:rota_id>', methods=['POST'])
+@login_required
+@requires_level(1)
+def delete_rota(rota_id):
+    """
+    Deletes a specific rota and all its associated assignments.
+    """
+    try:
+        rota_to_delete = Rota.query.filter_by(rota_id=rota_id).first()
+        if rota_to_delete:
+            # The 'cascade' option in the model automatically deletes related RotaAssignment records.
+            db.session.delete(rota_to_delete)
+            db.session.commit()
+            flash(f'Rota ID {rota_id} and all its assignments have been deleted.', 'success')
+        else:
+            flash(f'Rota ID {rota_id} not found.', 'warning')
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting rota ID {rota_id}: {str(e)}")
+        flash(f"An error occurred while deleting the rota: {str(e)}", 'danger')
+        
+    return redirect(url_for('rota.list_rotas'))
+
+# --- Obsolete Routes Removed ---
+# The '/select_night_off' route has been removed as it's no longer needed.
+# The '/rota/edit/<id>' route has been removed. Due to the database model change,
+# the old EditRotaForm is incompatible. A new editing interface would need to be
+# designed to handle individual RotaAssignment records.

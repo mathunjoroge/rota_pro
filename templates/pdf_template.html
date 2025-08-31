@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Rota Details - ID {{ rota_id }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1cm;
+        }
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 12pt;
+            margin: 0;
+            padding: 0;
+        }
+        h1 {
+            font-size: 18pt;
+            margin-bottom: 10pt;
+        }
+        p.lead {
+            font-size: 12pt;
+            margin-bottom: 15pt;
+        }
+        .table-container {
+            width: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10pt;
+        }
+        th, td {
+            border: 1pt solid #000;
+            padding: 6pt;
+            text-align: center;
+        }
+        th {
+            background-color: #333;
+            color: white;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .week-range {
+            width: 20%;
+        }
+        .no-assignments {
+            color: #856404;
+            background-color: #fff3cd;
+            padding: 10pt;
+            border: 1pt solid #ffeeba;
+            border-radius: 4pt;
+        }
+    </style>
+</head>
+<body>
+    
+    <p class="lead">
+        Schedule from <strong>{{ rota_info.start_date.strftime('%d %b %Y') }}</strong> to <strong>{{ rota_info.end_date.strftime('%d %b %Y') }}</strong>
+    </p>
+
+    {% if sorted_weekly_data %}
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="week-range">Week Range</th>
+                        {% for shift in shift_info %}
+                            <th>{{ shift.display_name }} ({{ shift.name }})</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for week_start, assignments in sorted_weekly_data %}
+                        <tr>
+                            {% set week_end = week_start + timedelta(days=6) %}
+                            <td>{{ week_start.strftime('%d %b') }} - {{ week_end.strftime('%d %b %Y') }}</td>
+                            {% for shift in shift_info %}
+                                <td>
+                                    {% set members = assignments[shift.display_name] %}
+                                    {% if members %}
+                                        {{ members | sort | join(', ') }}
+                                    {% else %}
+                                        &ndash;
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="no-assignments">
+            <h4>No Assignments Found</h4>
+            <p>No shift assignments are available for Rota ID {{ rota_id }}. The rota may be empty, or an error may have occurred.</p>
+        </div>
+    {% endif %}
+</body>
+</html>

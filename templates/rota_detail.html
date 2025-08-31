@@ -1,55 +1,72 @@
 {% extends "base.html" %}
 
 {% block title %}
-    Rota Details
+    Rota Details - ID {{ rota_id }}
 {% endblock %}
 
 {% block content %}
     {% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}
-    <div class="alert-container">
-      {% for category, message in messages %}
-        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-          {{ message }}
-          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        </div>
-      {% endfor %}
-    </div>
-  {% endif %}
-{% endwith %}
-    <h1>Rota Details for Rota {{ rota_id }}</h1>
+        {% if messages %}
+            <div class="alert-container">
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
 
-    {% if rotas %}
-        <table class="table table-striped table-bordered">
-            <thead>
-                <tr>
-                    <th>Week</th>
-                    <th>Day-shift (8 AM - 5 PM)</th>
-                    <th>Evening shift (5 PM - 8 PM)</th>
-                    <th>Night-shift (8 PM - 8 AM)</th>
-                    <th>Night Off</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for rota in rotas %}
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+
+            <p class="lead">
+                Schedule from <strong>{{ rota_info.start_date.strftime('%d %b %Y') }}</strong> to <strong>{{ rota_info.end_date.strftime('%d %b %Y') }}</strong>
+            </p>
+        </div>
+        <div>
+            <a href="{{ url_for('pdf.export_pdf', rota_id=rota_id) }}" class="btn btn-primary">
+                <i class="bi bi-file-earmark-pdf"></i> Export to PDF
+            </a>
+        </div>
+    </div>
+
+    {% if sorted_weekly_data %}
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered text-center">
+                <thead class="table-dark">
                     <tr>
-                        <td>{{ rota.week_range }}</td>
-                        <td>
-                            {% for member in rota.shift_8_5.split(',') %}
-                                {{ member.strip() }}{% if not loop.last %}, {% endif %}
-                            {% endfor %}
-                        </td>
-                        <td>{{ rota.shift_5_8 }}</td>
-                        <td>{{ rota.shift_8_8 }}</td>
-                        <td>{{ rota.night_off }}</td>
+                        <th style="width: 20%;">Week Range</th>
+                        {% for shift in shift_info %}
+                            <th title="{{ shift.name }}">{{ shift.display_name }}</th>
+                        {% endfor %}
                     </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <a href="{{ url_for('pdf.export_pdf', rota_id=rota_id) }}" class="btn btn-secondary mt-2">Export to PDF</a>  </a>
+                </thead>
+                <tbody>
+                    {% for week_start, assignments in sorted_weekly_data %}
+                        <tr>
+                            {% set week_end = week_start + timedelta(days=6) %}
+                            <td>{{ week_start.strftime('%d %b') }} - {{ week_end.strftime('%d %b %Y') }}</td>
+                            {% for shift in shift_info %}
+                                <td>
+                                    {% set members = assignments[shift.display_name] %}
+                                    {% if members %}
+                                        {{ members | sort | join(', ') }}
+                                    {% else %}
+                                        &ndash;
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     {% else %}
-        <div class="alert alert-danger" role="alert">
-            No rota available yet.
+        <div class="alert alert-warning" role="alert">
+            <h4 class="alert-heading">No Assignments Found</h4>
+            <p>No shift assignments are available for Rota ID {{ rota_id }}. The rota may be empty, or an error may have occurred.</p>
         </div>
     {% endif %}
 {% endblock %}

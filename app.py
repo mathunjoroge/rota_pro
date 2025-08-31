@@ -3,7 +3,7 @@ from flask_login import LoginManager, current_user
 from dotenv import load_dotenv
 import os
 from datetime import timedelta
-from models.models import db, User
+from models.models import db, User,Rota,RotaAssignment
 from blueprints.org import org_bp
 from blueprints.temp_log import temp_bp, schedule_tasks
 from blueprints.members import members_bp
@@ -44,6 +44,7 @@ def update_session_timeout():
 with app.app_context():
     db.create_all()
     schedule_tasks(app)  # Schedule the temperature recording tasks
+
 
 # Register blueprints
 app.register_blueprint(org_bp)
